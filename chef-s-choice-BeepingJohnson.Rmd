@@ -1,0 +1,283 @@
+---
+title: "Analysis of Twitch streamer success"
+output: pdf_document
+---
+class: STP 494 
+by Jonathan Franco
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(glmnet)
+library(rpart)
+library(randomForest)
+library(gbm)
+library(ggplot2)
+library(keras)
+```
+
+## Twitch Data Set
+
+- **source:** [Kaggle Twitch Data Set](https://www.kaggle.com/aayushmishra1512/twitchdata/version/3)
+
+- The data set consists of the top 1000 streamers on twitch and their statistics barring actual income 
+
+- **Question:** Does stream time (*as in time that a streamer is online streaming*) have a significant effect on the amount of watch time that a streamer gets?
+<center> ![twitch logo](twitchlogo.jpg){width="500" height="300"}
+
+
+## Question Methodology
+
+- The reason this question is important is because it could show that if streamers put in the time streaming a lot and consistently then they could grow.
+
+- If this is not the case, what other feature is effecting the growth and size of channels on the top 1000?
+
+- Is it *pure luck* or a *meritocracy* for those on Twitch?
+
+## Top 10 chart
+
+```{r}
+#loading in data and making the first half of the table
+twitch_data = read_csv("data/twitchdata-update.csv", show_col_types = FALSE)
+knitr::kable(twitch_data[0:5, 0:3], caption=' Top 10 Twitch Streamers and Stream Time')
+# this is for later showing the disparity in watch times and stream times
+ratio<-twitch_data$`Watch time(Minutes)`[twitch_data$Channel=="xQcOW"]/twitch_data$`Watch time(Minutes)`[twitch_data$Channel=="Remx"]
+ratio2<-twitch_data$`Stream time(minutes)`[twitch_data$Channel=="xQcOW"]/twitch_data$`Stream time(minutes)`[twitch_data$Channel=="Remx"]
+```
+
+## Top 10 (cont.)
+
+```{r}
+# other half of the table
+knitr::kable(twitch_data[6:10, 0:3], caption=' Top 10 Twitch Streamers and Stream Time')
+```
+## Top 10 watch time
+
+```{r}
+# creation of a pit chart for the top ten to show how they relate to each other
+x<-twitch_data$`Watch time(Minutes)`[0:10]
+# in order to not crowd the pie chart with long names
+y=seq(1:10)
+# shows percentages
+pct<-round(x/sum(x)*100)
+y1<-paste(y,pct, sep="; ")
+y1<-paste(y1,"%",sep="")
+par(mfrow=c(1,2))
+pie(x,labels=y1, main='Watch Time', col=rainbow(length(y)))
+plot.new()
+par(xpd=T)
+legend(x="top", legend= c("1: xQcOW", "2: summit1g", "3: Gaules", "4: ESL_CSGO", 
+                  "5: Tfue", "6: Asmongold", "7: NICKMERCS", 
+                  "8: Fextralife", "9: loltyler1", "10: Anomaly"))
+par(xpd=F)
+```
+
+## Top 10 time streamed
+
+```{r}
+x2<-twitch_data$`Stream time(minutes)`[0:10]
+pct2<-round(x2/sum(x2)*100)
+y2<-paste(y,pct2, sep="; ")
+y2<-paste(y2,"%",sep="")
+par(mfrow=c(1,2))
+pie(x2,labels=y2, main='Time Streamed', col=rainbow(length(y)))
+plot.new()
+par(xpd=T)
+legend(x="center", legend= c("1: xQcOW", "2: summit1g", "3: Gaules", "4: ESL_CSGO", 
+                  "5: Tfue", "6: Asmongold", "7: NICKMERCS", 
+                  "8: Fextralife", "9: loltyler1", "10: Anomaly"))
+par(xpd=F)
+```
+
+
+## Distribution of watch time among top 1k
+
+```{r}
+# shows the distribution of watch time accross the ranked channels
+distr<-twitch_data$`Watch time(Minutes)`
+scaledx = (distr-min(distr))/(max(distr)-min(distr))
+y3<-seq(1,1000)
+plot(scaledx, y3 ,ylab='Ranked Channels',xlab='watch time(Scaled)', pch=19)
+```
+
+## Differences in the top 1k
+
+- The previous chart showed the major differences between watch time of the top 1k channels, but to put it in to better perspective allow us to look at #1 and #1000
+
+- xQcOW (#1) has `r round(ratio)` times the amount of watch time that Remx (#1000) has
+
+- But, he only has `r round(ratio2)` times the stream time
+
+
+
+## Distribution of stream time among top 1k
+
+```{r}
+# shows the distribution of stream time across ranked channels
+distr2<-twitch_data$`Stream time(minutes)`
+scaledx2 = (distr2-min(distr2))/(max(distr2)-min(distr2))
+plot(scaledx2, y3 ,ylab='ranked Channels',xlab='stream time(Scaled)', pch=19)
+```
+
+## Differences in the top 1k (cont)
+
+- This new chart of stream times shows that there is a *bit* of a trend towards larger streamers streaming for longer but it's not very significant and as you can see below its not a good metric for predicting success
+```{r}
+distr2<-twitch_data$`Stream time(minutes)`
+scaledx2 = (distr2-min(distr2))/(max(distr2)-min(distr2))
+plot(scaledx2, scaledx ,ylab='stream time(Scaled)',xlab='watch time(Scaled)',main="watch time vs stream time", pch=19)
+```
+
+
+## top 5 ratios
+
+- In this column of watch time vs stream time its clear that the ratio varies wildly without any extra visualizations
+```{r}
+# just to emphasize the how success is achieved differently for each channel
+twitch_data$ratio=twitch_data$`Watch time(Minutes)`/twitch_data$`Stream time(minutes)`
+r_tab<-data.frame(twitch_data[c('Channel','ratio')])
+knitr::kable(r_tab[0:5,0:2], caption=' Top 10 Twitch Streamers w/ ratio (watch time/stream time)')
+```
+
+## predictions
+
+- This new chart of stream times shows that there is a *bit* of a trend towards larger streamers streaming for longer but it's not very significant and as you can see below its not a good metric for predicting success
+```{r}
+distr2<-twitch_data$`Stream time(minutes)`
+scaledx2 = (distr2-min(distr2))/(max(distr2)-min(distr2))
+plot(scaledx2, scaledx ,ylab='stream time(Scaled)',xlab='watch time(Scaled)',main="watch time vs stream time", pch=19)
+```
+
+## Using Lasso, trees, and boosting to find any sort of correlation between variables
+
+find what makes a good streamer
+using all possible data
+
+```{r}
+set.seed(14)
+
+cd = subset(twitch_data, select = -c(1))
+cd$Partnered = as.factor(cd$Partnered)
+cd$Mature = as.factor(cd$Mature)
+cd$Language = as.factor(cd$Language)
+
+n = nrow(cd)
+pin = .75
+ii = sample(1:n, floor(pin*n))
+cdtr = cd[ii,]
+cdte = cd[-ii,]
+
+y = cdtr$`Watch time(Minutes)`
+x = model.matrix(`Watch time(Minutes)`~.,cdtr)[,-1]
+xtest = model.matrix(`Watch time(Minutes)`~.,cdte)[,-1]
+
+#tree
+
+big.tree = rpart(y~.,method="anova",data=cdtr,control=rpart.control(minsplit=5,cp=.0001))
+nbig = length(unique(big.tree$where))
+
+plotcp(big.tree)
+
+iibest = which.min(big.tree$cptable[,"xerror"]) #which has the lowest error
+bestcp=big.tree$cptable[iibest,"CP"]
+bestsize = big.tree$cptable[iibest,"nsplit"]+1
+
+best.tree = prune(big.tree,cp=bestcp)
+nbest = length(unique(best.tree$where))
+cat("size of best tree: ", nbest,"\n")
+
+yhat = predict(best.tree)
+plot(cdtr$ratio, y, xlab='streaming time by viewing count',ylab='watch time')
+points(cdtr$ratio,yhat,col='blue')
+title(main='in sample fit using a single tree')
+
+ypred = predict(best.tree,cdte)
+plot(cdte$ratio,cdte$`Watch time(Minutes)`,xlab='streaming time by viewing count',ylab='watch time')
+points(cdte$ratio,ypred,col='blue')
+title('out of sample fit using a single tree')
+
+rmsetree = sqrt(mean((cdte$`Watch time(Minutes)` - ypred)^2))
+cat('test rmse for tree: ',rmsetree,'\n')
+
+# forest
+names(cdtr) = make.names(names(cdtr))
+rffit = randomForest(y~., data=cdtr)
+yhatrf = predict(rffit)
+plot(cdtr$ratio,y,xlab='streaming time by viewing count',ylab='watch time')
+points(cdtr$ratio,yhatrf,col='blue')
+title(main='in sample fit for default random forest')
+
+rffit1 = randomForest(y~.,data=cdtr,mtry=1,ntree=1000,maxnodes=50)
+yhatrf1 = predict(rffit1)
+plot(cdtr$ratio,cdtr$Watch.time.Minutes.,xlab='streaming time by viewing count',ylab='watch time')
+points(cdtr$ratio,yhatrf1,col='blue')
+title(main='in sample fit for random forests with maxnodes=50')
+
+plot(rffit1)
+title(main='plot of random forests object with maxnodes=50')
+
+names(cdte) = make.names(names(cdte))
+ypredrf1 = predict(rffit1,newdata=cdte)
+rmserf = sqrt(mean((cdte$Watch.time.Minutes. - ypredrf1)^2))
+cat('rmse for random forests: ',rmserf,'\n')
+
+print("Trees has led to nothing particularly interesting, and has shown little in terms of what makes a streamer popular")
+
+# boosting
+
+boostfit = gbm(y~.,data=cdtr,distribution="gaussian",
+   interaction.depth=4,n.trees=500,shrinkage=.2)
+yhatbst = predict(boostfit,n.trees=500)
+plot(cdtr$ratio,cdtr$Watch.time.Minutes.,xlab='streaming time by viewing count',ylab='watch time')
+points(cdtr$ratio,yhatbst,col='blue')
+title(main='in sample boosting 500 trees, shrinkage=.2')
+
+boostfit1 = gbm(y~.,data=cdtr,distribution="gaussian",
+   interaction.depth=4,n.trees=100,shrinkage=.2)
+yhatbst1 = predict(boostfit1,n.trees=100)
+plot(cdtr$ratio,cdtr$Watch.time.Minutes.,xlab='streaming time by viewing count',ylab='watch time')
+points(cdtr$ratio,yhatbst1,col='blue')
+title(main='in sample boosting 100 trees, shrinkage=.2')
+
+ypredbst1 = predict(boostfit,newdata=cdte,n.trees=100)
+rmsebst = sqrt(mean((cdte$Watch.time.Minutes. - ypredbst1)^2))
+cat('boosting rmse with mileage: ',rmsebst,'\n')
+
+print("Boosting has also failed to show anything of significance other than its looking to be more luck than anything!")
+
+# lasso
+
+stream.gcv = cv.glmnet(x, y, type.measure = "mse", nfolds =10, alpha = 1)
+plot(stream.gcv)
+
+
+lmin = stream.gcv$lambda.min
+l1se = stream.gcv$lambda.1se
+cat("lambda min: ", lmin, "\n")
+cat("lambda 1se: ", l1se, "\n")
+crmse = sqrt(stream.gcv$cvm)
+plot(log(stream.gcv$lambda),crmse,xlab="log(lambda)", ylab="rmse")
+
+cat("min rmse: ", min(crmse), "\n")
+stream.las = stream.gcv$glmnet.fit
+plot(stream.las)
+ypred = predict(stream.las, newx=xtest, s=c(lmin,l1se))
+oosrmse = sqrt(mean((cdte$Watch.time.Minutes. - ypred)^2))
+cat("out of sample rmse: ", oosrmse, "\n")
+print("Terrible Rmse, which shows that atleast my data can not show what makes a streamer")
+
+```
+
+
+## In conclusion
+
+- There is no significant correlation between watch time and time streamed
+- Does that mean that the success of streamers is completely up to luck?
+- No, but it could. The watch time seems to be a function of avg viewers and time streamed and that combination of the two varies from channel to channel
+- each channel is different some are independent streamers that may stream a little but garner a large audience others are large organizations that can afford to stream all the time
+- I think that if anything a more important question to ask would be if watch time should be considered a metric of success when something like income generated could be more tangible and involves amount of ads streamers run as well the income generated from stream time and large audiences
+- so, if I could get data for income next time I would have to pull add frequency as well as these watch times to see if they correlate
+- The machine learning aspect also showed no results other than I either need to pull more and better data or that it really is all luck when it comes to success on Twitches platform
+
+
+
